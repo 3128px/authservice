@@ -16,6 +16,7 @@ CACHE_DIR ?= $(root_dir).cache
 
 # Prepackaged tools may have more than precompiled binaries, e.g. for clang,
 prepackaged_tools_dir := $(CACHE_DIR)/tools/prepackaged
+bazel_cache_dir       := $(CACHE_DIR)/bazel
 clang_version         := $(subst github.com/llvm/llvm-project/llvmorg/clang+llvm@,,$(clang@v))
 
 # Currently we resolve it using which. But more sophisticated approach is to use infer GOROOT.
@@ -26,6 +27,7 @@ goos   := $(shell $(go) env GOOS)
 export PATH            := $(prepackaged_tools_dir)/bin:$(PATH)
 export LLVM_PREFIX     := $(prepackaged_tools_dir)
 export RT_LIBRARY_PATH := $(prepackaged_tools_dir)/lib/clang/$(clang_version)/lib/$(goos)
+export BAZELISK_HOME   := $(CACHE_DIR)/tools/bazelisk
 export CGO_ENABLED     := 0
 
 # Make 3.81 doesn't support '**' globbing: Set explicitly instead of recursion.
@@ -63,20 +65,20 @@ bazel-bin/src/main/auth_server:
 # Always use amd64 for bazelisk for build and test rules below, since we don't support for macOS
 # arm64 (with --host_javabase=@local_jdk//:jdk) yet (especially the protoc-gen-validate project:
 # "no matching toolchains found for types @io_bazel_rules_go//go:toolchain").
-bazel        := GOARCH=amd64 $(go) run $(bazelisk@v)
+bazel        := GOARCH=amd64 $(go) run $(bazelisk@v) --output_user_root=$(bazel_cache_dir)
 clang        := $(prepackaged_tools_dir)/bin/clang
 llvm-config  := $(prepackaged_tools_dir)/bin/llvm-config
 clang-format := $(prepackaged_tools_dir)/bin/clang-format
 
 build: ## Build the main binary
-	$(bazel) build $(BAZEL_FLAGS) $(TARGET)
+	$(call bazel-build)
 
 run: ## Build the main target
 	$(bazel) run $(BAZEL_FLAGS) $(TARGET)
 
 TEST_FLAGS ?= --strategy=TestRunner=standalone --test_output=all
 test: ## Run tests
-	$(bazel) test $(BAZEL_FLAGS) $(TEST_FLAGS) //test/...
+	$(call bazel-test)
 
 check: ## Run check script
 	@$(MAKE) format
@@ -89,8 +91,9 @@ check: ## Run check script
 # Usage examples:
 #   make filter-test FILTER=*RetrieveToken*
 #   make filter-test FILTER=OidcFilterTest.*
+FILTER ?= *RetrieveToken*
 filter-test:
-	$(bazel) test $(BAZEL_FLAGS) $(TEST_FLAGS) //test/... --test_arg='--gtest_filter=$(FILTER)'
+	$(call bazel-test,--test_arg='--gtest_filter=$(FILTER)')
 
 coverage:
 	$(bazel) coverage $(BAZEL_FLAGS) --instrumentation_filter=//src/ //...
@@ -107,6 +110,20 @@ dep-graph.dot:
 
 clang.bazelrc: bazel/clang.bazelrc.tmpl $(llvm-config)
 	@$(go) run $(envsubst@v) < $< > $@
+
+define bazel-build
+	$(call bazel-dirs)
+	$(bazel) build $(BAZEL_FLAGS) $1 $(TARGET)
+endef
+
+define bazel-test
+	$(call bazel-dirs)
+	$(bazel) test $(BAZEL_FLAGS) $(TEST_FLAGS) //test/... $1
+endef
+
+define bazel-dirs
+	@mkdir -p $(BAZELISK_HOME) $(bazel_cache_dir)
+endef
 
 # Install clang from https://github.com/llvm/llvm-project. We don't support win32 yet as this script
 # will fail.
