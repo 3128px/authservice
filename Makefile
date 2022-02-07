@@ -68,17 +68,17 @@ clang        := $(prepackaged_tools_dir)/bin/clang
 llvm-config  := $(prepackaged_tools_dir)/bin/llvm-config
 clang-format := $(prepackaged_tools_dir)/bin/clang-format
 
-build:
-	$(bazel) build $(BAZEL_FLAGS) //src/...
+build: ## Build the main binary
+	$(bazel) build $(BAZEL_FLAGS) $(TARGET)
 
-run:
+run: ## Build the main target
 	$(bazel) run $(BAZEL_FLAGS) $(TARGET)
 
 TEST_FLAGS ?= --strategy=TestRunner=standalone --test_output=all
-test:
+test: ## Run tests
 	$(bazel) test $(BAZEL_FLAGS) $(TEST_FLAGS) //test/...
 
-check:
+check: ## Run check script
 	@$(MAKE) format
 	@if [ ! -z "`git status -s`" ]; then \
 		echo "The following differences will fail CI until committed:"; \
@@ -95,11 +95,11 @@ filter-test:
 coverage:
 	$(bazel) coverage $(BAZEL_FLAGS) --instrumentation_filter=//src/ //...
 
-format: $(clang-format)
+format: $(clang-format) ## Format source files
 	@$(go) run $(buildifier@v) --lint=fix -r .
 	@$(clang-format) -i $(main_cc_sources) $(testable_cc_sources) $(protos)
 
-clean:
+clean: ## Run bazel clean
 	$(bazel) clean --expunge --async
 
 dep-graph.dot:
@@ -126,3 +126,23 @@ $(clang-format):
 	@mkdir -p $(dir $@)
 	@curl -SL $(call clang-format-download-archive-url,$@) | tar xzf - -C $(prepackaged_tools_dir)/bin \
 		--strip 3 $(call clang-format-dir,$@)/bin/$(goos)_x64
+
+# This is adopted from https://github.com/tetratelabs/func-e/blob/3df66c9593e827d67b330b7355d577f91cdcb722/Makefile#L60-L76.
+# ANSI escape codes. f_ means foreground, b_ background.
+# See https://en.wikipedia.org/wiki/ANSI_escape_code#SGR_(Select_Graphic_Rendition)_parameters.
+f_black            := $(shell printf "\33[30m")
+b_black            := $(shell printf "\33[40m")
+f_white            := $(shell printf "\33[97m")
+f_gray             := $(shell printf "\33[37m")
+f_dark_gray        := $(shell printf "\33[90m")
+f_blue             := $(shell printf "\33[34m")
+b_blue             := $(shell printf "\33[44m")
+ansi_reset         := $(shell printf "\33[0m")
+ansi_authservice   := $(b_black)$(f_black)$(b_blue)authservice$(ansi_reset)
+ansi_format_dark   := $(f_gray)$(f_blue)%-10s$(ansi_reset) $(f_dark_gray)%s$(ansi_reset)\n
+ansi_format_bright := $(f_white)$(f_blue)%-10s$(ansi_reset) $(f_black)$(b_blue)%s$(ansi_reset)\n
+
+# This formats help statements in ANSI colors. To hide a target from help, don't comment it with a trailing '##'.
+help: ## Describe how to use each target
+	@printf "$(ansi_authservice)$(f_white)\n"
+	@awk 'BEGIN {FS = ":.*?## "} /^[0-9a-zA-Z_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "$(ansi_format_dark)", $$1, $$2}' $(MAKEFILE_LIST)

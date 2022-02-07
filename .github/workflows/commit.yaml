@@ -32,6 +32,10 @@ jobs:
         os:
           - "macos-11"
           - "ubuntu-20.04"
+        mode:
+          - "default"
+          - "clang"
+          - "clang-fips"
     steps:
       - name: Cancel when duplicated
         uses: styfle/cancel-workflow-action@0.4.1
@@ -64,15 +68,16 @@ jobs:
         run: make check
         if: runner.os == 'Linux'
 
+      - name: Setup clang
+        if: matrix.mode == 'clang' || matrix.mode == 'clang-fips'
+        run: make clang.bazelrc
+
       - name: Run all tests
+        if: matrix.mode != 'clang-fips'
         run: make test
 
       - name: Run all tests with FIPS mode
-        run : |
-          make clang.bazelrc
-          make test
+        if: matrix.mode == 'clang-fips'
+        run: make test
         env:
           BAZEL_FLAGS: "--config=clang --define=boringssl=fips"
-
-      - name: Build current binary
-        run: make build
