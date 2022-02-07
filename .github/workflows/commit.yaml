@@ -105,7 +105,7 @@ jobs:
       # Set BAZEL_FLAGS to FIPS mode only when it is required.
       - name: Setup FIPS mode
         if: matrix.mode == 'clang-fips'
-        run: echo "BAZEL_FLAGS='--config=clang --define=boringssl=fips'" >> $GITHUB_ENV
+        run: echo 'BAZEL_FLAGS="--config=clang --define=boringssl=fips"' >> $GITHUB_ENV
 
       - name: Run all tests
         run: make test

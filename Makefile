@@ -14,6 +14,9 @@ root_dir := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 # Local cache directory.
 CACHE_DIR ?= $(root_dir).cache
 
+# Go tools directory holds the binaries of Go-based tools.
+go_tools_dir := $(CACHE_DIR)/tools/go
+
 # Prepackaged tools may have more than precompiled binaries, e.g. for clang,
 prepackaged_tools_dir := $(CACHE_DIR)/tools/prepackaged
 bazel_cache_dir       := $(CACHE_DIR)/bazel
@@ -33,6 +36,7 @@ export CGO_ENABLED     := 0
 # Make 3.81 doesn't support '**' globbing: Set explicitly instead of recursion.
 main_cc_sources     := $(wildcard src/*/*.cc src/*/*.h src/*/*/*.cc src/*/*/*.h)
 testable_cc_sources := $(wildcard test/*/*.cc test/*/*.h test/*/*/*.cc test/*/*/*.h)
+bazel_files         := $(wildcard WORKSPACE BUILD.bazel bazel/*.bzl bazel/*.BUILD src/*/BUILD src/*/*/BUILD src/*/*/*/BUILD test/*/BUILD test/*/*/BUILD test/*/*/*/BUILD)
 
 all: build test docs
 
@@ -66,9 +70,12 @@ bazel-bin/src/main/auth_server:
 # arm64 (with --host_javabase=@local_jdk//:jdk) yet (especially the protoc-gen-validate project:
 # "no matching toolchains found for types @io_bazel_rules_go//go:toolchain").
 bazel        := GOARCH=amd64 $(go) run $(bazelisk@v) --output_user_root=$(bazel_cache_dir)
+buildifier   := $(go_tools_dir)/buildifier
+envsubst     := $(go_tools_dir)/envsubst
 clang        := $(prepackaged_tools_dir)/bin/clang
 llvm-config  := $(prepackaged_tools_dir)/bin/llvm-config
 clang-format := $(prepackaged_tools_dir)/bin/clang-format
+
 
 build: ## Build the main binary
 	$(call bazel-build)
@@ -98,8 +105,10 @@ filter-test:
 coverage:
 	$(bazel) coverage $(BAZEL_FLAGS) --instrumentation_filter=//src/ //...
 
-format: $(clang-format) ## Format source files
-	@$(go) run $(buildifier@v) --lint=fix -r .
+# We "manually" list down all bazel files using wildcard above since: https://github.com/bazelbuild/buildtools/issues/801
+# and we need to ignore all bazel files in .cache directory.
+format: $(clang-format) $(buildifier) ## Format source files
+	@$(buildifier) --lint=fix $(bazel_files)
 	@$(clang-format) -i $(main_cc_sources) $(testable_cc_sources) $(protos)
 
 clean: ## Run bazel clean
@@ -108,8 +117,14 @@ clean: ## Run bazel clean
 dep-graph.dot:
 	$(bazel) query $(BAZEL_FLAGS) --nohost_deps --noimplicit_deps "deps($(TARGET))" --output graph > $@
 
-clang.bazelrc: bazel/clang.bazelrc.tmpl $(llvm-config)
-	@$(go) run $(envsubst@v) < $< > $@
+clang.bazelrc: bazel/clang.bazelrc.tmpl $(llvm-config) $(envsubst)
+	@$(envsubst) < $< > $@
+
+# Catch all rules for Go-based tools.
+$(go_tools_dir)/%:
+	@printf "$(ansi_format_dark)" tools "installing $($(notdir $@)@v)..."
+	@GOBIN=$(go_tools_dir) go install $($(notdir $@)@v)
+	@printf "$(ansi_format_bright)" tools "ok"
 
 define bazel-build
 	$(call bazel-dirs)
