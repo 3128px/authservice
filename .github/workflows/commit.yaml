@@ -90,27 +90,22 @@ jobs:
           go-version: 1.17.x
 
       - name: Install macOS prerequisites
-        run: brew install cmake ninja coreutils
+        run: brew install cmake ninja coreutils # make is already installed.
         if: runner.os == 'macOS'
 
       - name: Install Ubuntu prerequisites
-        run: sudo apt-get update && sudo apt-get -y install make cmake ninja-build build-essential
+        run: sudo apt-get update && sudo apt-get -y install cmake ninja-build # make is already installed.
         if: runner.os == 'Linux'
 
-      - name: Check format
-        run: make check
-        if: runner.os == 'Linux'
-
+      # Prepare clang tooling and config when it is required.
       - name: Setup clang
         if: matrix.mode == 'clang' || matrix.mode == 'clang-fips'
-        run: make clang.bazelrc
+        run: make clang.bazelrc # This downloads the required clang tooling when it is not downloaded yet.
+
+      # Set BAZEL_FLAGS to FIPS mode only when it is required.
+      - name: Setup FIPS mode
+        if: matrix.mode == 'clang-fips'
+        run: echo "BAZEL_FLAGS='--config=clang --define=boringssl=fips'" >> $GITHUB_ENV
 
       - name: Run all tests
-        if: matrix.mode != 'clang-fips'
         run: make test
-
-      - name: Run all tests with FIPS mode
-        if: matrix.mode == 'clang-fips'
-        run: make test
-        env:
-          BAZEL_FLAGS: "--config=clang --define=boringssl=fips"
