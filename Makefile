@@ -1,4 +1,4 @@
-.PHONY: all docs compose docker docker-from-scratch docker-compile-env build run test coverage format clean
+.PHONY: all docs compose docker docker-from-scratch docker-compile-env build run test coverage format clean dist
 
 # Include versions of tools we build or fetch on-demand.
 include Tools.mk
@@ -38,6 +38,10 @@ main_cc_sources     := $(wildcard src/*/*.cc src/*/*.h src/*/*/*.cc src/*/*/*.h)
 testable_cc_sources := $(wildcard test/*/*.cc test/*/*.h test/*/*/*.cc test/*/*/*.h)
 bazel_files         := $(wildcard WORKSPACE BUILD.bazel bazel/*.bzl bazel/*.BUILD src/*/BUILD src/*/*/BUILD src/*/*/*/BUILD test/*/BUILD test/*/*/BUILD test/*/*/*/BUILD)
 
+binary_name     := auth_server
+current_binary  := bazel-bin/src/main/$(binary_name)
+stripped_binary := $(current_binary).stripped
+
 all: build test docs
 
 docs:
@@ -62,8 +66,8 @@ docker-from-scratch:
 docker-compile-env:
 	docker build -f build/Dockerfile.interactive-compile-environment -t authservice-build-env:$(USER) .
 
-bazel-bin/src/main/auth_server:
-    # Note: add --compilation_mode=dbg to the end of the next line to build a debug executable with `make docker-from-scratch`
+$(current_binary):
+# Note: add --compilation_mode=dbg to the end of the next line to build a debug executable with `make docker-from-scratch`
 	bazel build $(BAZEL_FLAGS) //src/main:auth_server
 
 # Always use amd64 for bazelisk for build and test rules below, since we don't support for macOS
@@ -76,9 +80,32 @@ clang        := $(prepackaged_tools_dir)/bin/clang
 llvm-config  := $(prepackaged_tools_dir)/bin/llvm-config
 clang-format := $(prepackaged_tools_dir)/bin/clang-format
 
-
 build: ## Build the main binary
 	$(call bazel-build)
+
+# This should be overridden by current tag (with stripped "v") when running `make dist` on CI.
+VERSION ?= dev
+# This will be overridden with available matrix modes (e.g. default, clang, clang-fips).
+MODE ?= default
+
+dist: dist/$(binary_name)_$(goos)_amd64_$(MODE)_$(VERSION).tar.gz
+
+# Since we don't do cross-compilation (probably later via `zig cc`) we can only build artifact for
+# the current `os` and `mode` pair (e.g. {os: 'macOS', mode: 'clang-fips'}).
+dist/$(binary_name)_$(goos)_amd64_$(MODE)_$(VERSION).tar.gz: $(stripped_binary) ## Create build artifacts
+	@$(eval DIST_DIR := $(shell mktemp -d))
+	@cp -f LICENSE $(DIST_DIR)
+	@mkdir -p dist $(DIST_DIR)/bin
+	@cp -f $(stripped_binary) $(DIST_DIR)/bin/$(binary_name)
+	@tar -C $(DIST_DIR) -cpzf $@ .
+
+# Stripped binary is compiled using "--compilation_mode opt". "opt" means build with optimization
+# enabled and with assert() calls disabled (-O2 -DNDEBUG). Debugging information will not be
+# generated in opt mode unless you also pass --copt -g.
+#
+# Reference: https://docs.bazel.build/versions/main/user-manual.html#flag--compilation_mode.
+$(stripped_binary): $(main_cc_sources) $(bazel_files)
+	$(call bazel-build,--compilation_mode opt,.stripped)
 
 run: ## Build the main target
 	$(bazel) run $(BAZEL_FLAGS) $(TARGET)
@@ -128,7 +155,7 @@ $(go_tools_dir)/%:
 
 define bazel-build
 	$(call bazel-dirs)
-	$(bazel) build $(BAZEL_FLAGS) $1 $(TARGET)
+	$(bazel) build $(BAZEL_FLAGS) $1 $(TARGET)$2
 endef
 
 define bazel-test
